@@ -1,8 +1,9 @@
-#ifndef I2C_H_
-#define I2C_H_
+#ifndef BETY
+#define BETY <3
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <stdlib.h>
 
 #define F_CPU 16000000
 
@@ -75,7 +76,6 @@ typedef struct I2CTransmission{
 	uint8_t* buffer;
 	uint16_t buffer_start;
 	uint16_t buffer_length;
-	uint16_t bytes_transmitted;
 	enum I2CTransmissionStatus status;
 } I2CTransmission;
 
@@ -84,8 +84,10 @@ uint8_t I2C_transmission_ended;
 int I2C_init();
 void I2C_enable();
 void I2C_disable();
+void I2C_dispose();
 void I2C_enable_GC_recognition();
 void I2C_disable_GC_recognition();
-void I2C_start_transmission(I2CTransmission* transmission);
-void I2C_start_transmission_async(I2CTransmission* transmission);
+uint8_t I2C_start_transmission(I2CTransmission* transmission, uint8_t attempts);
+uint8_t I2C_start_transmission_async(I2CTransmission* transmission, uint8_t attempts);
+void I2C_queue_transmission(I2CTransmission* transmission);
 #endif
