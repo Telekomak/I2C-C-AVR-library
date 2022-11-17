@@ -15,27 +15,29 @@
 
 #define TWAR_GCE 0x01 //TWI General call recognition enable bit
 
-uint8_t set_frequency(uint32_t frequency);
-uint8_t m_transmit(I2CTransmission* transmission);
-uint8_t m_receive(I2CTransmission* transmission);
+uint8_t _I2C_set_frequency(uint32_t frequency);
+enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission);
+enum I2CTransmissionResult _I2C_m_receive(I2CTransmission* transmission);
 
-I2CConfig* _config;
-I2CTransmission* _transmition;
-I2CTransmission** _transmission_queue;
-enum I2CTransmissionStatus _expected_status;
-uint8_t _current_queue_position = 0;
-uint8_t _last_queue_position = 0;
+I2CConfig* _I2C_config;
+I2CTransmission** _I2C_transmission_queue;
+enum I2CTransmissionStatus _I2C_expected_status;
+uint8_t _I2C_current_queue_position = 0;
+uint8_t _I2C_last_queue_position = 0;
 
 //Return codes:
+//0: Success
 //1: Invalid frequency
 //2: Invalid address
-int I2C_init(I2CConfig* config)
+uint8_t I2C_init(I2CConfig* config)
 {
-	_transmission_queue = malloc(sizeof(I2CTransmission*) * 256);
-	_config = config;
+	PORTC |= 0x30;
+	
+	_I2C_transmission_queue = calloc(128, sizeof(I2CTransmission*));
+	_I2C_config = config;
 	I2C_transmission_ended = 1;
 	
-	if (config -> mode != SLAVE) if (!set_frequency(config -> frequency)) return 1;
+	if (config -> mode != SLAVE) if (_I2C_set_frequency(config -> frequency)) return 1;
 	if (config -> mode != MASTER) 
 	{
 		if (config -> address < 0x08 || config -> address > 0x77) return 2;
@@ -51,12 +53,120 @@ int I2C_init(I2CConfig* config)
 	//Enable ACK
 	TWCR |= TWCR_EA;
 	
-	if (config -> recognize_general_call) TWAR |= TWAR_GCE;
-	
 	return 0;
 }
 
-uint8_t set_frequency(uint32_t frequency)
+void I2C_free()
+{
+	free(_I2C_transmission_queue);
+}
+
+void I2C_enable()
+{
+	TWCR |= TWCR_EN;
+}
+
+void I2C_disable()
+{
+	TWCR &= ~TWCR_EN;
+}
+
+void I2C_enable_GC_recognition()
+{
+	if(_I2C_config -> mode != MASTER) TWAR |= TWAR_GCE;
+}
+
+void I2C_disable_GC_recognition()
+{
+	if(_I2C_config -> mode != MASTER) TWAR &= ~TWAR_GCE;
+}
+
+void I2C_queue_transmission(I2CTransmission* transmission)
+{
+	transmission -> status = C_PENDING;
+	_I2C_transmission_queue[_I2C_last_queue_position] = transmission;
+	_I2C_last_queue_position++;
+}
+
+enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission)
+{
+	if (!(TWCR & TWCR_EN)) return ERR_TWI_DISABLED;
+	if (!(TWCR & TWCR_EA)) return ERR_ACK_DISABLED;
+	if (_I2C_config -> mode == SLAVE) return ERR_SLAVE;
+	
+	while(!I2C_transmission_ended)
+	I2C_transmission_ended = 0;
+	
+	//Disable interrupt
+	TWCR &= ~TWCR_INTEN;
+	
+	//Clear STOP flag
+	TWCR &= ~TWCR_STO;
+	
+	enum I2CTransmissionResult result;
+	
+	if (transmission -> rw) result = _I2C_m_receive(transmission);
+	else result = _I2C_m_send(transmission);
+	
+	if(result == ARB_LOST_SLA)
+	{
+		//Enable interrupt
+		TWCR |= TWCR_INTEN;
+		return result;
+	}
+	
+	TWCR |= TWCR_STO;
+	
+	TWCR |= TWCR_INT;
+	
+	I2C_transmission_ended = 1;
+
+	//Enable interrupt
+	TWCR |= TWCR_INTEN;
+	
+	return result;
+}
+
+/*WIP
+//Return codes:
+//0: Success
+//1: TWI is disabled
+//2: ACK is disabled
+//3: Device is in slave mode
+uint8_t I2C_start_transmission_async(I2CTransmission* transmission)
+{
+	if (TWCR &= ~TWCR_EN) return 1;
+	if (TWCR &= ~TWCR_EA) return 2;
+	if (_I2C_config -> mode == SLAVE) return 3;
+	
+	I2C_queue_transmission(transmission);
+	if (!I2C_transmission_ended) return 0;
+	
+	//Enable interrupt
+	TWCR |= TWCR_INTEN;
+	
+	//Clear STOP flag
+	TWCR &= ~TWCR_STO;
+	
+	I2C_transmission_ended = 0;
+	
+	_I2C_expected_status = MTR_START;
+	
+	//START:
+	//Load start condition
+	TWCR |= TWCR_STA;
+	
+	//Clear the interrupt flag
+	TWCR |= TWCR_INT;
+	
+	return 0;
+}
+*/
+
+//Return codes:
+//0: Success
+//1: Invalid address
+uint8_t _I2C_set_frequency(uint32_t frequency)
 {
 	if (frequency == 0) return 1;
 	
@@ -95,58 +205,59 @@ uint8_t set_frequency(uint32_t frequency)
 	return 1;
 }
 
-void I2C_free()
-{
-	free(_transmission_queue);
-}
-
-void I2C_enable()
-{
-	TWCR |= TWCR_EN;
-}
-
-void I2C_disable()
-{
-	TWCR &= ~TWCR_EN;
-}
-
-void I2C_enable_GC_recognition()
-{
-	if(_config -> mode != MASTER) TWAR |= TWAR_GCE;
-}
-
-void I2C_disable_GC_recognition()
-{
-	if(_config -> mode != MASTER) TWAR &= ~TWAR_GCE;
-}
-
-void I2C_queue_transmission(I2CTransmission* transmission)
-{
-	_last_queue_position++;
-	_transmission_queue[_last_queue_position] = transmission;
-}
-
+/*WIP
 ISR(TWI_vect)
 {
+	_I2C_transmission_queue[_I2C_current_queue_position] -> status = TWSR & TWSR_STATUS;
 	
+	if ((TWSR & TWSR_STATUS) != _I2C_expected_status)
+	{
+		_I2C_current_queue_position++;
+		if (_I2C_current_queue_position == _I2C_last_queue_position) return;
+		
+		_I2C_expected_status = C_PENDING;
+		TWCR |= TWCR_INT;
+	}
+	
+	switch(_I2C_expected_status)
+	{
+		
+	}
 }
-
-//Return codes:
-//1: Unexpected TWI state
-uint8_t m_transmit(I2CTransmission* transmission)
+*/
+enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission)
 {	
 	//START:
-	//Send start condition
+	//Load start condition
 	TWCR |= TWCR_STA;
 	
 	//Clear the interrupt flag
 	TWCR |= TWCR_INT;
 	
 	//Wait for interrupt flag
-	while(TWCR & ~TWCR_INT);
+	while(!(TWCR & TWCR_INT));
 	
 	transmission -> status = TWSR & TWSR_STATUS;
-	if((TWSR & TWSR_STATUS) != (uint8_t)MTR_START) return 1;
+	if(!((TWSR & TWSR_STATUS) == MTR_START || (TWSR & TWSR_STATUS) == MTR_REPSTART))
+	{	
+		switch (TWSR & TWSR_STATUS)
+		{
+			case MTR_ARB_LOST:
+				return ARB_LOST;
+				
+			case SR_ARB_LOST_SLAW_ACK:
+				return ARB_LOST_SLA;
+				
+			case SR_ARB_LOST_GC_ACK:
+				return ARB_LOST_SLA;
+				
+			case ST_ARB_LOST_SLAR_ACK:
+				return ARB_LOST_SLA;
+				
+			default:
+				return UNEXPECTED_STATE;
+		}
+	}
 	
 	//SLA+W:
 	//Load SLA+W
@@ -158,10 +269,10 @@ uint8_t m_transmit(I2CTransmission* transmission)
 	//Clear the interrupt flag
 	TWCR |= TWCR_INT;
 	
-	while(TWCR & ~TWCR_INT);
+	while(!(TWCR & TWCR_INT));
 	
 	transmission -> status = TWSR & TWSR_STATUS;
-	if (transmission -> status != MT_SLAW_ACK) return 1;
+	if ((TWSR & TWSR_STATUS) != MT_SLAW_ACK) return UNEXPECTED_STATE;
 	
 	//DATA:
 	for(uint16_t i = transmission -> buffer_start; (i - transmission -> buffer_start) < transmission -> buffer_length; i++)
@@ -169,32 +280,51 @@ uint8_t m_transmit(I2CTransmission* transmission)
 		TWDR = transmission -> buffer[i];
 		TWCR |= TWCR_INT;
 		
-		while(TWCR & ~TWCR_INT);
+		while(!(TWCR & TWCR_INT));
 		
 		transmission -> status = TWSR & TWSR_STATUS;
-		if (transmission -> status != MT_DATA_ACK) return 1;
+		if ((TWSR & TWSR_STATUS) != MT_DATA_ACK) return UNEXPECTED_STATE;
+		
+		transmission -> bytes_transmitted++;
 	}
 	
 	transmission -> status = C_SUCCESS;
-	return 0;
+	return SUCCESS;
 }
 
-//Return codes:
-//1: Unexpected TWI state
-uint8_t m_receive(I2CTransmission* transmission)
+enum I2CTransmissionResult _I2C_m_receive(I2CTransmission* transmission)
 {
 	//START:
-	//Send start condition
+	//Load start condition
 	TWCR |= TWCR_STA;
 	
 	//Clear the interrupt flag
 	TWCR |= TWCR_INT;
 	
 	//Wait for interrupt flag
-	while(TWCR & ~TWCR_INT);
+	while(!(TWCR & TWCR_INT));
 	
 	transmission -> status = TWSR & TWSR_STATUS;
-	if((TWSR & TWSR_STATUS) != (uint8_t)MTR_START) return 1;
+	if(!((TWSR & TWSR_STATUS) == MTR_START || (TWSR & TWSR_STATUS) == MTR_REPSTART))
+	{
+		switch (TWSR & TWSR_STATUS)
+		{
+			case MTR_ARB_LOST:
+				return ARB_LOST;
+			
+			case SR_ARB_LOST_SLAW_ACK:
+				return ARB_LOST_SLA;
+			
+			case SR_ARB_LOST_GC_ACK:
+				return ARB_LOST_SLA;
+			
+			case ST_ARB_LOST_SLAR_ACK:
+				return ARB_LOST_SLA;
+			
+			default:
+				return UNEXPECTED_STATE;
+		}
+	}
 	
 	//SLA+R:
 	//Load SLA+R
@@ -206,85 +336,25 @@ uint8_t m_receive(I2CTransmission* transmission)
 	//Clear the interrupt flag
 	TWCR |= TWCR_INT;
 	
-	while(TWCR & ~TWCR_INT);
+	while(!(TWCR & TWCR_INT));
 	
 	transmission -> status = TWSR & TWSR_STATUS;
-	if (transmission -> status != MR_SLAR_ACK) return 1;
+	if (transmission -> status != MR_SLAR_ACK) return UNEXPECTED_STATE;
 	
 	//DATA:
 	for(uint16_t i = transmission -> buffer_start; (i - transmission -> buffer_start) < transmission -> buffer_length; i++)
 	{
 		TWCR |= TWCR_INT;
 		
-		while(TWCR & ~TWCR_INT);
+		while(!(TWCR & TWCR_INT));
 		
 		transmission -> status = TWSR & TWSR_STATUS;
-		if (transmission -> status != MR_DATA_ACK) return 1;
+		if (transmission -> status != MR_DATA_ACK) return UNEXPECTED_STATE;
 		
 		transmission -> buffer[i] = TWDR;
+		transmission -> bytes_transmitted++;
 	}
 	
 	transmission -> status = C_SUCCESS;
-	return 0;
-}
-
-//Return codes:
-//1: TWI is disabled
-//2: ACK is disabled
-uint8_t I2C_start_transmission(I2CTransmission* transmission, uint8_t attempts)
-{	
-	if (TWCR &= ~TWCR_EN) return 1;
-	if (TWCR &= ~TWCR_EA) return 2;
-	if (attempts < 1) attempts = 1;
-	
-	I2C_queue_transmission(transmission);
-	while(!I2C_transmission_ended);
-	
-	I2C_transmission_ended = 0;
-	
-	//Disable interrupt
-	TWCR &= ~TWCR_INTEN;
-	
-	//Clear STOP flag
-	TWCR &= ~TWCR_STO;
-	
-	while(_current_queue_position != _last_queue_position)
-	{
-		for (uint8_t i = 0; i < attempts; i++)
-		{
-			if (_transmission_queue[_current_queue_position] -> rw)
-				if (!m_receive(_transmission_queue[_current_queue_position])) break;
-			else
-				if (!m_transmit(_transmission_queue[_current_queue_position])) break;
-		}
-		
-		_current_queue_position++;
-	}
-	
-	TWCR |= TWCR_STO;
-	
-	I2C_transmission_ended = 1;
-	
-	return 0;
-}
-
-uint8_t I2C_start_transmission_async(I2CTransmission* transmission, uint8_t attempts)
-{
-	if (TWCR &= ~TWCR_EN) return 1;
-	if (TWCR &= ~TWCR_EA) return 2;
-	if (attempts < 1) attempts = 1;
-	
-	I2C_queue_transmission(transmission);
-	if (!I2C_transmission_ended) return 0;
-	
-	//Enable interrupt
-	TWCR |= TWCR_INTEN;
-	
-	//Clear STOP flag
-	TWCR &= ~TWCR_STO;
-	
-	I2C_transmission_ended = 0;
-	
-	I2C_transmission_ended = 1;
-	return 0;
+	return SUCCESS;
 }

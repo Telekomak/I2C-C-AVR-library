@@ -5,12 +5,22 @@
 #include <avr/interrupt.h>
 #include <stdlib.h>
 
-#define F_CPU 16000000
+#define F_CPU 16000000u
 
 enum I2CMode{
 	MASTER = 0,
 	MULTI_MASTER = 1,
 	SLAVE = 2
+};
+
+enum I2CTransmissionResult{
+	SUCCESS = 0,
+	ERR_TWI_DISABLED = 1,
+	ERR_ACK_DISABLED = 2,
+	ERR_SLAVE = 3,
+	ARB_LOST = 4,
+	ARB_LOST_SLA = 5,
+	UNEXPECTED_STATE = 6
 };
 
 enum I2CTransmissionStatus{
@@ -59,7 +69,7 @@ enum I2CTransmissionStatus{
 	
 	C_ERR_ACK_DISABLED = 0x01, //TWCR ACK enable bit is 0 (bit 6)
 	C_ERR_TWI_DISABLED = 0x02, //TWCR TWI enable bit is 0 (bit 2)
-	C_ERR_GENERAL = 0x03, //Undefined error
+	C_PENDING = 0x03, //Transmission in queue
 	C_SUCCESS = 0x04 //Transmission was successful
 };
 
@@ -72,22 +82,23 @@ typedef struct I2CConfig{
 
 typedef struct I2CTransmission{
 	uint8_t slave_address;
-	uint8_t rw;
+	uint8_t rw; // 1 = read
 	uint8_t* buffer;
 	uint16_t buffer_start;
 	uint16_t buffer_length;
+	uint16_t bytes_transmitted;
 	enum I2CTransmissionStatus status;
 } I2CTransmission;
 
-uint8_t I2C_transmission_ended;
+volatile uint8_t I2C_transmission_ended;
 
-int I2C_init();
+uint8_t I2C_init();
 void I2C_enable();
 void I2C_disable();
 void I2C_dispose();
 void I2C_enable_GC_recognition();
 void I2C_disable_GC_recognition();
-uint8_t I2C_start_transmission(I2CTransmission* transmission, uint8_t attempts);
-uint8_t I2C_start_transmission_async(I2CTransmission* transmission, uint8_t attempts);
+enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission);
+//uint8_t I2C_start_transmission_async(I2CTransmission* transmission);
 void I2C_queue_transmission(I2CTransmission* transmission);
 #endif
