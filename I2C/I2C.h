@@ -1,11 +1,18 @@
-#ifndef BETY
-#define BETY <3
+#ifndef I2C
+#define I2C
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <stdlib.h>
 
-#define F_CPU 16000000u
+//transmission config
+#define TCONFIG_MODE 0x01
+#define TCONFIG_STOP 0x02
+
+#define TCONFIG_MODE_READ 0x01
+#define TCONFIG_MODE_WRITE 0x00
+#define TCONFIG_STOP_LENGTH 0x02
+#define TCONFIG_STOP_TERMINATOR 0x00
 
 enum I2CMode{
 	MASTER = 0,
@@ -82,11 +89,10 @@ typedef struct I2CConfig{
 
 typedef struct I2CTransmission{
 	uint8_t slave_address;
-	uint8_t rw; // 1 = read
+	uint8_t transmission_config;
 	uint8_t* buffer;
-	uint16_t buffer_start;
+	uint8_t terminator;
 	uint16_t buffer_length;
-	uint16_t bytes_transmitted;
 	enum I2CTransmissionStatus status;
 } I2CTransmission;
 
