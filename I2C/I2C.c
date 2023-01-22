@@ -275,34 +275,19 @@ enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission)
 	if ((TWSR & TWSR_STATUS) != MT_SLAW_ACK) return UNEXPECTED_STATE;
 	
 	//DATA
-	if (transmission -> transmission_config & TCONFIG_STOP)
+	for(uint16_t i = 0; i < transmission -> buffer_length; i++)
 	{
-		for(uint16_t i = 0; i < transmission -> buffer_length; i++)
-		{
-			TWDR = transmission -> buffer[i];
-			TWCR |= TWCR_INT;
-			
-			while(!(TWCR & TWCR_INT));
-			
-			transmission -> status = TWSR & TWSR_STATUS;
-			if ((TWSR & TWSR_STATUS) != MT_DATA_ACK) return UNEXPECTED_STATE;
-		}	
+		TWDR = transmission -> buffer[i];
+		TWCR |= TWCR_INT;
+		
+		while(!(TWCR & TWCR_INT));
+		
+		transmission -> status = TWSR & TWSR_STATUS;
+		if ((TWSR & TWSR_STATUS) != MT_DATA_ACK) return UNEXPECTED_STATE;
+		
+		transmission -> bytes_transmitted++;
+		if (transmission -> buffer[i] == transmission -> terminator && !(transmission -> transmission_config & TCONFIG_STOP)) break;
 	}
-	else
-	{
-		for(uint16_t i = 0; true; i++)
-		{
-			TWDR = transmission -> buffer[i];
-			TWCR |= TWCR_INT;
-			
-			while(!(TWCR & TWCR_INT));
-			
-			transmission -> status = TWSR & TWSR_STATUS;
-			if ((TWSR & TWSR_STATUS) != MT_DATA_ACK) return UNEXPECTED_STATE;
-			if (transmission -> buffer[i] == transmission -> terminator) break;
-		}
-	}
-	
 	
 	transmission -> status = C_SUCCESS;
 	return SUCCESS;
@@ -358,34 +343,18 @@ enum I2CTransmissionResult _I2C_m_receive(I2CTransmission* transmission)
 	if (transmission -> status != MR_SLAR_ACK) return UNEXPECTED_STATE;
 	
 	//DATA:
-	if (transmission -> transmission_config & TCONFIG_STOP)
+	for(uint16_t i = 0; i < transmission -> buffer_length; i++)
 	{
-		for(uint16_t i = 0; i < transmission -> buffer_length; i++)
-		{
-			TWCR |= TWCR_INT;
-			
-			while(!(TWCR & TWCR_INT));
-			
-			transmission -> status = TWSR & TWSR_STATUS;
-			if (transmission -> status != MR_DATA_ACK) return UNEXPECTED_STATE;
-			
-			transmission -> buffer[i] = TWDR;
-		}
-	}
-	else
-	{
-		for(uint16_t i = 0; true; i++)
-		{
-			TWCR |= TWCR_INT;
-			
-			while(!(TWCR & TWCR_INT));
-			
-			transmission -> status = TWSR & TWSR_STATUS;
-			if (transmission -> status != MR_DATA_ACK) return UNEXPECTED_STATE;
-			
-			transmission -> buffer[i] = TWDR;
-			if (TWDR == transmission -> terminator) break;
-		}
+		TWCR |= TWCR_INT;
+		
+		while(!(TWCR & TWCR_INT));
+		
+		transmission -> status = TWSR & TWSR_STATUS;
+		if (transmission -> status != MR_DATA_ACK) return UNEXPECTED_STATE;
+		
+		transmission -> buffer[i] = TWDR;
+		transmission -> bytes_transmitted++;
+		if (TWDR == transmission -> terminator && !(transmission -> transmission_config & TCONFIG_STOP)) break;
 	}
 	
 	transmission -> status = C_SUCCESS;

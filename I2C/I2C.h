@@ -5,6 +5,8 @@
 #include <avr/interrupt.h>
 #include <stdlib.h>
 
+#define F_CPU 16000000
+
 //transmission config
 #define TCONFIG_MODE 0x01
 #define TCONFIG_STOP 0x02
@@ -93,6 +95,7 @@ typedef struct I2CTransmission{
 	uint8_t* buffer;
 	uint8_t terminator;
 	uint16_t buffer_length;
+	uint16_t bytes_transmitted;
 	enum I2CTransmissionStatus status;
 } I2CTransmission;
 
