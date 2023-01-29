@@ -20,10 +20,8 @@ enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission);
 enum I2CTransmissionResult _I2C_m_receive(I2CTransmission* transmission);
 
 I2CConfig* _I2C_config;
-I2CTransmission** _I2C_transmission_queue;
 enum I2CTransmissionStatus _I2C_expected_status;
-uint8_t _I2C_current_queue_position = 0;
-uint8_t _I2C_last_queue_position = 0;
+void (*_I2C_on_receive_handler)(I2CTransmission*);
 
 //Return codes:
 //0: Success
@@ -33,8 +31,8 @@ uint8_t I2C_init(I2CConfig* config)
 {
 	PORTC |= 0x30;
 	
-	_I2C_transmission_queue = calloc(128, sizeof(I2CTransmission*));
 	_I2C_config = config;
+	_I2C_on_receive_handler = 0;
 	I2C_transmission_ended = 1;
 	
 	if (config -> mode != SLAVE) if (_I2C_set_frequency(config -> frequency)) return 1;
@@ -56,37 +54,12 @@ uint8_t I2C_init(I2CConfig* config)
 	return 0;
 }
 
-void I2C_free()
-{
-	free(_I2C_transmission_queue);
-}
-
-void I2C_enable()
-{
-	TWCR |= TWCR_EN;
-}
-
-void I2C_disable()
-{
-	TWCR &= ~TWCR_EN;
-}
-
-void I2C_enable_GC_recognition()
-{
-	if(_I2C_config -> mode != MASTER) TWAR |= TWAR_GCE;
-}
-
-void I2C_disable_GC_recognition()
-{
-	if(_I2C_config -> mode != MASTER) TWAR &= ~TWAR_GCE;
-}
-
-void I2C_queue_transmission(I2CTransmission* transmission)
-{
-	transmission -> status = C_PENDING;
-	_I2C_transmission_queue[_I2C_last_queue_position] = transmission;
-	_I2C_last_queue_position++;
-}
+void I2C_enable() {TWCR |= TWCR_EN;}
+void I2C_disable() {TWCR &= ~TWCR_EN;}
+void I2C_enable_GC_recognition() {if(_I2C_config -> mode != MASTER) TWAR |= TWAR_GCE;}
+void I2C_disable_GC_recognition() {if(_I2C_config -> mode != MASTER) TWAR &= ~TWAR_GCE;}
+void I2C_on_receive_subscribe(void* handler) {_I2C_on_receive_handler = handler;}
+void I2C_on_receive_unsubscribe() {_I2C_on_receive_handler = 0;}
 
 enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission)
 {

@@ -104,10 +104,10 @@ volatile uint8_t I2C_transmission_ended;
 uint8_t I2C_init();
 void I2C_enable();
 void I2C_disable();
-void I2C_dispose();
 void I2C_enable_GC_recognition();
 void I2C_disable_GC_recognition();
 enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission);
-//uint8_t I2C_start_transmission_async(I2CTransmission* transmission);
-void I2C_queue_transmission(I2CTransmission* transmission);
+void I2C_on_receive_subscribe(void* handler);
+void I2C_on_receive_unsubscribe();
+
 #endif
