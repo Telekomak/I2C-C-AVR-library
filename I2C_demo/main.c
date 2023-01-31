@@ -4,8 +4,10 @@
 #include "HD44780\HD44780_LCD.h"
 #include <util\delay.h>
 
+void test(I2CTransmission* transmission);
+
 int main(void)
-{
+{	
 	uint8_t tx_result = 0x0F;
 	uint8_t rx_result = 0x0F;
 	
@@ -17,6 +19,8 @@ int main(void)
 	
 	I2CConfig config = {.frequency = 100000, .mode = MASTER};
 	uint8_t init_result = I2C_init(&config);
+	
+	I2C_on_receive_subscribe(test);
 	I2C_enable();
 	
 	//char* tx_buffer = malloc(13);
@@ -43,5 +47,11 @@ int main(void)
 	lcd_set_cursor(1, 0);
 	
 	lcd_write_string(rx_transmission.buffer, rx_transmission.bytes_transmitted);
+}
+
+void test(I2CTransmission* transmission)
+{
+	DDRB |= 0x20;
+	PORTB |= 0x20;
 }
 
