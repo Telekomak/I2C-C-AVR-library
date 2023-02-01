@@ -90,14 +90,18 @@ typedef struct I2CConfig{
 } I2CConfig;
 
 typedef struct I2CTransmission{
+	I2CStream stream;
 	uint8_t slave_address;
 	uint8_t transmission_config;
-	uint8_t* buffer;
-	uint8_t terminator;
-	uint16_t buffer_length;
+	uint8_t terminator;//TODO change terminator behavior
 	uint16_t bytes_transmitted;
 	enum I2CTransmissionStatus status;
 } I2CTransmission;
+
+typedef struct I2CStream{
+	char* buffer;
+	uint16_t length;
+} I2CStream;
 
 volatile uint8_t I2C_transmission_ended;
 
