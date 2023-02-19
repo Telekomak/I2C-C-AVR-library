@@ -4,7 +4,7 @@
 #include "HD44780\HD44780_LCD.h"
 #include <util\delay.h>
 
-void test(I2CTransmission* transmission);
+void test(I2CMasterTransmission* transmission);
 
 int main(void)
 {	
@@ -25,10 +25,10 @@ int main(void)
 	
 	//char* tx_buffer = malloc(13);
 	//strcpy(tx_buffer, "Hello world?");
-	I2CTransmission tx_transmission = {.buffer = "Hello world?", .transmission_config = TCONFIG_MODE_WRITE | TCONFIG_STOP_TERMINATOR, .terminator = 0x0, .buffer_length = 20, .slave_address = 0x0F};
+	I2CMasterTransmission tx_transmission = {.buffer = "Hello world?", .transmission_config = TCONFIG_MODE_WRITE | TCONFIG_STOP_TERMINATOR, .terminator = 0x0, .buffer_length = 20, .slave_address = 0x0F};
 	
 	uint8_t* rx_buffer = calloc(13, 1);
-	I2CTransmission rx_transmission = {.buffer = rx_buffer, .transmission_config = TCONFIG_MODE_READ | TCONFIG_STOP_TERMINATOR, .terminator = 0x0, .buffer_length = 20, .slave_address = 0x0F};
+	I2CMasterTransmission rx_transmission = {.buffer = rx_buffer, .transmission_config = TCONFIG_MODE_READ | TCONFIG_STOP_TERMINATOR, .terminator = 0x0, .buffer_length = 20, .slave_address = 0x0F};
 	
 	rx_result = I2C_start_transmission(&rx_transmission);
 	
@@ -49,7 +49,7 @@ int main(void)
 	lcd_write_string(rx_transmission.buffer, rx_transmission.bytes_transmitted);
 }
 
-void test(I2CTransmission* transmission)
+void test(I2CMasterTransmission* transmission)
 {
 	DDRB |= 0x20;
 	PORTB |= 0x20;

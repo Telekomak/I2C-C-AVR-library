@@ -7,14 +7,16 @@
 
 #define F_CPU 16000000
 
+#ifndef I2C_STREAM_MODE
+	#define I2C_BUFFERED_MODE
+#endif
+
 //transmission config
 #define TCONFIG_MODE 0x01
-#define TCONFIG_STOP 0x02
+#define TCONFIG_TERMINATOR 0x02
 
 #define TCONFIG_MODE_READ 0x01
-#define TCONFIG_MODE_WRITE 0x00
-#define TCONFIG_STOP_LENGTH 0x02
-#define TCONFIG_STOP_TERMINATOR 0x00
+#define TCONFIG_ENABLE_TERMINATOR 0x02
 
 enum I2CMode{
 	MASTER = 0,
@@ -24,12 +26,12 @@ enum I2CMode{
 
 enum I2CTransmissionResult{
 	SUCCESS = 0,
-	ERR_TWI_DISABLED = 1,
-	ERR_ACK_DISABLED = 2,
-	ERR_SLAVE = 3,
-	ARB_LOST = 4,
-	ARB_LOST_SLA = 5,
-	UNEXPECTED_STATE = 6
+	ERR_SLAVE = 1,
+	ARB_LOST = 2,
+	ARB_LOST_SLA = 3,
+	UNEXPECTED_STATE = 4,
+	INTERNAL_ERROR = 5,
+	TERMINATOR_NOT_DETECTED = 6
 };
 
 enum I2CTransmissionStatus{
@@ -75,11 +77,6 @@ enum I2CTransmissionStatus{
 	
 	M_NO_INFO = 0xF8, //No relevant state information available; TWINT = “0”
 	M_ERR_ILLEGAL_START_STOP = 0x00, //Bus error due to an illegal START or STOP condition
-	
-	C_ERR_ACK_DISABLED = 0x01, //TWCR ACK enable bit is 0 (bit 6)
-	C_ERR_TWI_DISABLED = 0x02, //TWCR TWI enable bit is 0 (bit 2)
-	C_PENDING = 0x03, //Transmission in queue
-	C_SUCCESS = 0x04 //Transmission was successful
 };
 
 typedef struct I2CConfig{
@@ -89,14 +86,20 @@ typedef struct I2CConfig{
 	uint8_t recognize_general_call;
 } I2CConfig;
 
-typedef struct I2CTransmission{
+typedef struct I2CMasterTransmission{
 	I2CStream stream;
 	uint8_t slave_address;
-	uint8_t transmission_config;
-	uint8_t terminator;//TODO change terminator behavior
+	uint8_t config;
+	uint8_t terminator;
 	uint16_t bytes_transmitted;
 	enum I2CTransmissionStatus status;
-} I2CTransmission;
+} I2CMasterTransmission;
+
+typedef struct I2CSlaveTransmission{
+	I2CStream stream;
+	uint16_t bytes_transmitted;
+	enum I2CTransmissionStatus status;
+}I2CSlaveTransmission;
 
 typedef struct I2CStream{
 	char* buffer;
@@ -110,7 +113,7 @@ void I2C_enable();
 void I2C_disable();
 void I2C_enable_GC_recognition();
 void I2C_disable_GC_recognition();
-enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission);
+enum I2CTransmissionResult I2C_start_transmission(I2CMasterTransmission* transmission);
 void I2C_on_receive_subscribe(void* handler);
 void I2C_on_receive_unsubscribe();
 

@@ -16,14 +16,16 @@
 #define TWAR_GCE 0x01 //TWI General call recognition enable bit
 
 uint8_t _I2C_set_frequency(uint32_t frequency);
-enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission);
-enum I2CTransmissionResult _I2C_m_request(I2CTransmission* transmission);
-void _I2C_on_receive_invoke();
-void _I2C_write_to_stream(I2CStream* stream, uint8_t value);
-void _I2C_trim_stream(I2CStream* stream);
+enum I2CTransmissionResult _I2C_m_send(I2CMasterTransmission* transmission);
+enum I2CTransmissionResult _I2C_m_request(I2CMasterTransmission* transmission);
+
+#ifdef I2C_BUFFERED_MODE
+	void _I2C_on_receive_invoke();
+	uint8_t _I2C_write_to_stream(I2CStream* stream, uint16_t new_length,uint8_t value);
+	uint8_t _I2C_trim_stream(I2CStream* stream);
+#endif
 
 //SR status handlers
-//very painful
 void _I2C_status_SR_SLAW_ACK();
 void _I2C_status_SR_ARB_LOST_SLAW_ACK();
 void _I2C_status_SR_ARB_LOST_GC_ACK();
@@ -35,10 +37,11 @@ void _I2C_status_SR_GC_DATA_NACK();
 void _I2C_status_SR_STOP_REPSTART();
 
 I2CConfig* _I2C_config;
-enum I2CTransmissionStatus _I2C_last_status;
-I2CStream* _I2C_current_receive_stream;
-uint16_t _I2C_bytes_received;
-void (*_I2C_on_receive_handler)(I2CStream);
+
+#ifdef I2C_BUFFERED_MODE
+	I2CSlaveTransmission* _I2C_current_rx_transmission;
+	void (*_I2C_on_receive_handler)(I2CStream);
+#endif
 
 //Return codes:
 //0: Success
@@ -81,10 +84,11 @@ void I2C_disable_GC_recognition() {if(_I2C_config -> mode != MASTER) TWAR &= ~TW
 void I2C_on_receive_subscribe(void* handler) {_I2C_on_receive_handler = handler;}
 void I2C_on_receive_unsubscribe() {_I2C_on_receive_handler = 0;}
 
-enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission)
+enum I2CTransmissionResult I2C_start_transmission(I2CMasterTransmission* transmission)
 {
-	if (!(TWCR & TWCR_EN)) return ERR_TWI_DISABLED;
-	if (!(TWCR & TWCR_EA)) return ERR_ACK_DISABLED;
+	if (transmission == NULL || transmission -> stream.buffer == NULL) return INTERNAL_ERROR;
+	if (!(TWCR & TWCR_EN)) TWCR |= TWCR_EN;
+	if (!(TWCR & TWCR_EA)) TWCR |= TWCR_EA;
 	if (_I2C_config -> mode == SLAVE) return ERR_SLAVE;
 	
 	while(!I2C_transmission_ended)
@@ -98,7 +102,7 @@ enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission)
 	
 	enum I2CTransmissionResult result;
 	
-	if (transmission -> transmission_config & TCONFIG_MODE) result = _I2C_m_request(transmission);
+	if (transmission -> config & TCONFIG_MODE) result = _I2C_m_request(transmission);
 	else result = _I2C_m_send(transmission);
 	
 	if(result == ARB_LOST_SLA)
@@ -121,7 +125,7 @@ enum I2CTransmissionResult I2C_start_transmission(I2CTransmission* transmission)
 }
 
 //Passing whole struct because pointer can change in next ISR
-void _I2C_on_receive_invoke() { if(_I2C_on_receive_handler) _I2C_on_receive_handler(*_I2C_current_receive_stream);}
+void _I2C_on_receive_invoke() { if(_I2C_on_receive_handler) _I2C_on_receive_handler(*_I2C_current_rx_transmission);}
 
 //Return codes:
 //0: Success
@@ -169,7 +173,6 @@ ISR(TWI_vect)
 {
 	I2CTransmissionStatus status = TWSR & TWSR_STATUS;
 	
-	//PAIN
 	switch(status)
 	{
 		case SR_SLAW_ACK:
@@ -177,7 +180,7 @@ ISR(TWI_vect)
 			break;
 		
 		case SR_ARB_LOST_SLAW_ACK:
-			_I2C_status_SR_ARB_LOST_SLAW_ACK();
+			_I2C_status_SR_SLAW_ACK();
 			break;
 		
 		case SR_ARB_LOST_GC_ACK:
@@ -208,57 +211,51 @@ ISR(TWI_vect)
 			_I2C_status_SR_STOP_REPSTART();
 			break;
 	}
+	
+	TWCR |= TWCR_INT;
 }
 
 void _I2C_status_SR_SLAW_ACK()
 {
-	if(_I2C_current_receive_stream) free(_I2C_current_receive_stream);
-	_I2C_bytes_received = 0;
+	if(_I2C_current_rx_transmission) free(_I2C_current_rx_transmission);
 	
-	_I2C_current_receive_stream = calloc(sizeof(I2CStream), 1);
-	_I2C_current_receive_stream -> buffer = calloc(1, 8);
-	_I2C_current_receive_stream -> length = 8;
+	_I2C_current_rx_transmission = calloc(sizeof(I2CSlaveTransmission), 1);
+	_I2C_current_rx_transmission -> stream.buffer = calloc(1, 8);
+	_I2C_current_rx_transmission -> stream.length = 8;
+	_I2C_current_rx_transmission -> bytes_transmitted = 0;
 }
 
-//This works similar to array list
-void _I2C_write_to_stream(I2CStream* stream, uint8_t value)
+void _I2C_status_SR_DATA_ACK()
 {
-	if (stream -> length == _I2C_bytes_received)
+	if (_I2C_current_rx_transmission == NULL) return;
+	
+	_I2C_current_rx_transmission -> bytes_transmitted++;
+	_I2C_write_to_stream(_I2C_current_rx_transmission, _I2C_current_rx_transmission -> bytes_transmitted, TWDR);
+}
+
+uint8_t _I2C_write_to_stream(I2CStream* stream, uint16_t new_length, uint8_t value)
+{
+	if(stream -> length > new_length)
 	{
-		//copy the buffer
-		char* tmp = calloc(1, stream -> length);
-		memcpy(tmp, stream -> buffer, stream -> length);
-		
-		//free and resize
-		free(stream -> buffer);
-		stream -> buffer = calloc(1, stream -> length * 2);
-		
-		//move data back and free tmp
-		memcpy(stream -> buffer, tmp, stream -> length);
-		free(tmp);
-		
-		//update size
-		stream -> length *= 2; 
+		stream -> length *= 2;	
+		stream -> buffer = realloc(stream -> buffer, stream -> length)
 	}
+	if(stream -> buffer == NULL) return 1;
 	
-	stream -> buffer[_I2C_bytes_received] = value;
+	stream -> buffer[new_length - 1] = value;
+	return 0;
 }
 
-void _I2C_trim_stream(I2CStream* stream)
+uint8_t _I2C_trim_stream(I2CStream* stream)
 {
-	char* tmp = calloc(1, _I2C_bytes_received);
-	memcpy(tmp, stream -> buffer, _I2C_bytes_received);
+	stream -> length = _I2C_current_rx_transmission -> bytes_transmitted;
+	stream -> buffer = realloc(stream -> buffer, stream -> length)
 	
-	free(stream -> buffer);
-	stream -> buffer = calloc(1, _I2C_bytes_received);
-	
-	memcpy(stream -> buffer, tmp, _I2C_bytes_received);
-	free(tmp);
-	
-	stream -> length = _I2C_bytes_received;
+	if (stream -> buffer == NULL) return 1;
+	return 0;
 }
 
-enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission)
+enum I2CTransmissionResult _I2C_m_send(I2CMasterTransmission* transmission)
 {	
 	//START:
 	//Load start condition
@@ -319,14 +316,24 @@ enum I2CTransmissionResult _I2C_m_send(I2CTransmission* transmission)
 		if ((TWSR & TWSR_STATUS) != MT_DATA_ACK) return UNEXPECTED_STATE;
 		
 		transmission -> bytes_transmitted++;
-		if (transmission -> stream.buffer[i] == transmission -> terminator && !(transmission -> transmission_config & TCONFIG_STOP)) break;
 	}
 	
-	transmission -> status = C_SUCCESS;
+	if(transmission -> config & TCONFIG_TERMINATOR)
+	{
+		TWDR = transmission -> terminator;
+		TWCR |= TWCR_INT;
+		
+		while(!(TWCR & TWCR_INT));
+		
+		transmission -> status = TWSR & TWSR_STATUS;
+		if ((TWSR & TWSR_STATUS) != MT_DATA_ACK) return UNEXPECTED_STATE;
+		
+		transmission -> bytes_transmitted++;
+	}
 	return SUCCESS;
 }
 
-enum I2CTransmissionResult _I2C_m_request(I2CTransmission* transmission)
+enum I2CTransmissionResult _I2C_m_request(I2CMasterTransmission* transmission)
 {
 	//START:
 	//Load start condition
@@ -376,20 +383,50 @@ enum I2CTransmissionResult _I2C_m_request(I2CTransmission* transmission)
 	if (transmission -> status != MR_SLAR_ACK) return UNEXPECTED_STATE;
 	
 	//DATA:
-	for(uint16_t i = 0; i < transmission -> stream.length; i++)
+	if(transmission -> config & TCONFIG_TERMINATOR)
 	{
-		TWCR |= TWCR_INT;
+		if (transmission -> stream.buffer == NULL)
+		{
+			transmission -> stream.buffer = calloc(1, 8);
+			transmission -> stream.length = 8;
+		}
 		
-		while(!(TWCR & TWCR_INT));
-		
-		transmission -> status = TWSR & TWSR_STATUS;
-		if (transmission -> status != MR_DATA_ACK) return UNEXPECTED_STATE;
-		
-		transmission -> stream.buffer[i] = TWDR;
-		transmission -> bytes_transmitted++;
-		if (TWDR == transmission -> terminator && !(transmission -> transmission_config & TCONFIG_STOP)) break;
+		while(TWDR != transmission -> terminator)
+		{
+			TWCR |= TWCR_INT;
+			
+			while(!(TWCR & TWCR_INT));
+			
+			transmission -> status = TWSR & TWSR_STATUS;
+			
+			if (transmission -> status == MR_DATA_ACK)
+			{
+				transmission -> bytes_transmitted++;
+				if(_I2C_write_to_stream(transmission -> stream, transmission -> bytes_transmitted, TWDR)) return INTERNAL_ERROR;
+			}
+			else if(transmission -> status == MR_DATA_NACK)
+			{
+				transmission -> bytes_transmitted++;
+				if(_I2C_write_to_stream(transmission -> stream, transmission -> bytes_transmitted, TWDR)) return INTERNAL_ERROR;
+				return TERMINATOR_NOT_DETECTED;
+			}
+			else return UNEXPECTED_STATE;			
+		}
 	}
-	
-	transmission -> status = C_SUCCESS;
+	else
+	{
+		for(uint16_t i = 0; i < transmission -> stream.length; i++)
+		{
+			TWCR |= TWCR_INT;
+			
+			while(!(TWCR & TWCR_INT));
+			
+			transmission -> status = TWSR & TWSR_STATUS;
+			if (transmission -> status != MR_DATA_ACK) return UNEXPECTED_STATE;
+			
+			transmission -> stream.buffer[i] = TWDR;
+			transmission -> bytes_transmitted++;
+		}	
+	}
 	return SUCCESS;
 }
